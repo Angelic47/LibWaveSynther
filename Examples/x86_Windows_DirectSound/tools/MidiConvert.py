@@ -1,12 +1,16 @@
 #coding: utf-8
 
 import mido
+import mido.midifiles.tracks
 
 def getBPM(midifile):
 	for msg in midifile:
 		if msg.type == "set_tempo":
 			return mido.tempo2bpm(msg.tempo)
 	raise Exception("Get midi BPM failed: set_tempo not found")
+
+def getTicksPerBeat(midifile):
+    return midifile.ticks_per_beat
 
 def scanMaxSynthers(midifile):
 	synthers = 0
@@ -66,7 +70,7 @@ class SyntherClass():
 
 def generateNoteSynthers(midifile, syntherNum):
 	syntherClasses = [SyntherClass() for i in range(0, syntherNum)]
-	for msg in midifile:
+	for msg in mido.midifiles.tracks.merge_tracks(midifile.tracks):
 		# 处理时间
 		for synther in syntherClasses:
 			synther.addTime(msg.time)
@@ -107,27 +111,29 @@ def generateNoteSynthers(midifile, syntherNum):
 		synther.clean_up()
 	return syntherClasses
 
-def getSyntherNoteTable(synther, table_name, sampleRate):
+def getSyntherNoteTable(synther, table_name):
 	notes = []
 	note_times = []
 	for note in synther.notes:
 		notes.append(note[0])
-		note_times.append(int(round(note[1] * sampleRate / bpm)))
+		note_times.append(note[1])
 	return "#define SYNTH_NOTELEN_" + table_name.upper() + " " + str(len(notes)) + "\nDEFINE_SYNTH_NOTE_TABLE(g_" + table_name + ", SYNTH_NOTELEN_" + table_name.upper() + ") {" + ", ".join([str(x) for x in notes]) + "};\nDEFINE_SYNTH_NOTETIME_TABLE(g_" + table_name + "_time, SYNTH_NOTELEN_" + table_name.upper() + ") {" + ", ".join([str(x) for x in note_times]) + "};\n\n"
 
 midi_name = "touhou"
 midi = mido.MidiFile(ur'touhou/output.mid')
 bpm = getBPM(midi)
-bpm = int(round(bpm))
+ticksperbeats = getTicksPerBeat(midi)
+ticksPerMinunte = bpm * ticksperbeats
 syntherNum = scanMaxSynthers(midi)
 synthers = generateNoteSynthers(midi, syntherNum)
+sampleRate = 48000
 
 notetable = ""
 notetable_i = 1
 notetable_names = []
 notetime_names = []
 for synther in synthers:
-	notetable += getSyntherNoteTable(synther, midi_name + '_synth_' + str(notetable_i), 44100)
+	notetable += getSyntherNoteTable(synther, midi_name + '_synth_' + str(notetable_i))
 	notetable_names.append('g_' + midi_name + '_synth_' + str(notetable_i))
 	notetime_names.append('g_' + midi_name + '_synth_' + str(notetable_i) + '_time')
 	notetable_i += 1
@@ -136,13 +142,13 @@ notetable = "#include \"notetable.h\"\n\n" + notetable
 notetable += "synthnotenum_t g_tracknotenums_" + midi_name + "[" + str(syntherNum) + "] = {" + ", ".join([str(len(x.notes)) for x in synthers]) + "};\n"
 notetable += "synthnote_p g_tracknotes_" + midi_name + "[" + str(len(notetable_names)) + "] = {" + ", ".join(notetable_names) + "};\n"
 notetable += "synthnotetime_p g_tracknotetimes_" + midi_name + "[" + str(len(notetime_names)) + "] = {" + ", ".join(notetime_names) + "};\n"
-notetable += "\nsynth_notes_array_t g_" + midi_name + "_notes = { .tracker_num = " + str(syntherNum) + ", .notenum_array = g_tracknotenums_" + midi_name + ", .notetables_array = g_tracknotes_" + midi_name + ", .notetimes_array = g_tracknotetimes_" + midi_name + ", .notebpm = " + str(bpm) + " };\n"
+notetable += "\nsynth_notes_array_t g_" + midi_name + "_notes = { .tracker_num = " + str(syntherNum) + ", .notenum_array = g_tracknotenums_" + midi_name + ", .notetables_array = g_tracknotes_" + midi_name + ", .notetimes_array = g_tracknotetimes_" + midi_name + ", .notebpm = " + str(int(round(sampleRate * 60.0 / ticksPerMinunte))) + " };\n"
 
-f = open('tohou/notetable_' + midi_name + '.c', 'wb')
+f = open('touhou/notetable_' + midi_name + '.c', 'wb')
 f.write(notetable)
 f.close()
 
-f = open('tohou/notetable_' + midi_name + '.h', 'wb')
+f = open('touhou/notetable_' + midi_name + '.h', 'wb')
 f.write("""#pragma once
 #include "notetable.h"
 
